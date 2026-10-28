@@ -1,0 +1,24 @@
+# ITCH data files are large; keep them out of git
+data/*
+!data/.gitkeep
+
+# Generated vectors (rebuild with model/golden.py)
+tb/vectors*/
+
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Simulation output
+*.vcd
+*.fst
+sim_build/
+results.xml
+
+# Vivado
+*.jou
+*.log
+*.str
+.Xil/
+vivado/
