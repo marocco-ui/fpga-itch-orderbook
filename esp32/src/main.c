@@ -10,15 +10,29 @@
  *   0xFFFF + locate(2)  START: reset book and stats, track this locate
  *   0x0000              END:   print the report, then wait for START
  *
- * Works whether the board's USB-C goes through a USB-UART bridge (UART0)
- * or the C3's built-in USB Serial/JTAG: it listens on both.
+ * Talks over the C3's built-in USB Serial/JTAG by default. For a board
+ * whose USB goes through a USB-UART bridge chip (CP210x, CH340), build
+ * with -DITCH_USE_UART0=1 instead.
+ *
+ * All output goes through out(), which writes with the serial driver
+ * directly. printf() is not used after startup: once the driver owns
+ * the port, ESP-IDF's simple console writes can collide with it and
+ * get lost.
  */
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
+#ifndef ITCH_USE_UART0
+#define ITCH_USE_UART0 0
+#endif
+
+#if ITCH_USE_UART0
 #include "driver/uart.h"
+#else
 #include "driver/usb_serial_jtag.h"
+#endif
 #include "esp_cpu.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -44,6 +58,46 @@ static book_t   book;
 static stat_t   stats[N_TYPES];
 static uint32_t n_msgs, n_other, n_errors, peak_orders, check, n_updates;
 static uint32_t timer_overhead;
+
+/* ------------------------------------------------------------ serial io */
+
+static void io_init(void) {
+#if ITCH_USE_UART0
+    /* Pins and baud are already set up by the console; add RX/TX buffers. */
+    uart_driver_install(UART_NUM_0, RX_BUF, RX_BUF, 0, NULL, 0);
+#else
+    usb_serial_jtag_driver_config_t cfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
+    cfg.rx_buffer_size = RX_BUF;
+    cfg.tx_buffer_size = RX_BUF;
+    usb_serial_jtag_driver_install(&cfg);
+#endif
+}
+
+static int io_read(uint8_t *buf, int n) {
+#if ITCH_USE_UART0
+    return uart_read_bytes(UART_NUM_0, buf, n, 1);
+#else
+    return usb_serial_jtag_read_bytes(buf, n, 1);
+#endif
+}
+
+static void io_write(const char *buf, int n) {
+#if ITCH_USE_UART0
+    uart_write_bytes(UART_NUM_0, buf, n);
+#else
+    usb_serial_jtag_write_bytes(buf, n, pdMS_TO_TICKS(200));
+#endif
+}
+
+static void out(const char *fmt, ...) {
+    char line[160];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    if (n > (int)sizeof(line) - 1) n = sizeof(line) - 1;
+    if (n > 0) io_write(line, n);
+}
 
 /* ------------------------------------------------------------ stats */
 
@@ -91,32 +145,30 @@ static void reset_run(uint16_t locate) {
     memset(stats, 0, sizeof(stats));
     n_msgs = n_other = n_errors = peak_orders = n_updates = 0;
     check = BOOK_CHECK_INIT;
-    printf("READY locate=%u order_cap=%u\n", locate, (unsigned)BOOK_ORDER_CAP);
-    fflush(stdout);
+    out("READY locate=%u order_cap=%u\n", locate, (unsigned)BOOK_ORDER_CAP);
 }
 
 static void report(void) {
     book_top_t t = book_top(&book);
-    printf("BEGIN\n");
-    printf("CPU_HZ 160000000\n");
-    printf("OVERHEAD %" PRIu32 "\n", timer_overhead);
-    printf("MSGS %" PRIu32 "\n", n_msgs);
-    printf("OTHER %" PRIu32 "\n", n_other);
+    out("BEGIN\n");
+    out("CPU_HZ 160000000\n");
+    out("OVERHEAD %" PRIu32 "\n", timer_overhead);
+    out("MSGS %" PRIu32 "\n", n_msgs);
+    out("OTHER %" PRIu32 "\n", n_other);
     for (int i = 0; i < N_TYPES; i++) {
         const stat_t *s = &stats[i];
         if (!s->count) continue;
-        printf("STAT %c %" PRIu32 " min %" PRIu32 " p50 %" PRIu32 " p99 %" PRIu32
+        out("STAT %c %" PRIu32 " min %" PRIu32 " p50 %" PRIu32 " p99 %" PRIu32
                " max %" PRIu32 " sum %" PRIu64 "\n",
                TYPES[i], s->count, s->min, stat_pct(s, 50), stat_pct(s, 99),
                s->max, s->sum);
     }
-    printf("TOP %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 "\n",
+    out("TOP %" PRIu32 " %" PRIu32 " %" PRIu32 " %" PRIu32 "\n",
            t.bid_px, t.bid_qty, t.ask_px, t.ask_qty);
-    printf("CHECK %08" PRIx32 " %" PRIu32 "\n", check, n_updates);
-    printf("ORDERS %" PRIu32 " peak %" PRIu32 "\n", book.n_orders, peak_orders);
-    printf("ERR %" PRIu32 "\n", n_errors);
-    printf("DONE\n");
-    fflush(stdout);
+    out("CHECK %08" PRIx32 " %" PRIu32 "\n", check, n_updates);
+    out("ORDERS %" PRIu32 " peak %" PRIu32 "\n", book.n_orders, peak_orders);
+    out("ERR %" PRIu32 "\n", n_errors);
+    out("DONE\n");
 }
 
 /* ------------------------------------------------------------ messages */
@@ -186,23 +238,13 @@ static void feed(const uint8_t *p, int n) {
 
 void app_main(void)
 {
-    /* UART0: boards with a USB-UART bridge chip. Pins and baud are
-     * already set up by the console; just add an RX buffer. */
-    uart_driver_install(UART_NUM_0, RX_BUF, 0, 0, NULL, 0);
-
-    /* Built-in USB Serial/JTAG: boards wired straight to the C3's USB. */
-    usb_serial_jtag_driver_config_t ucfg = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
-    ucfg.rx_buffer_size = RX_BUF;
-    usb_serial_jtag_driver_install(&ucfg);
-
+    io_init();
     timer_overhead = measure_overhead();
     reset_run(1);
 
     static uint8_t rx[512];
     for (;;) {
-        int n = uart_read_bytes(UART_NUM_0, rx, sizeof(rx), 1);
-        if (n > 0) feed(rx, n);
-        n = usb_serial_jtag_read_bytes(rx, sizeof(rx), 0);
+        int n = io_read(rx, sizeof(rx));
         if (n > 0) feed(rx, n);
     }
 }

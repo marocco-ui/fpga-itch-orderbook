@@ -25,6 +25,10 @@ The same ITCH parser and order book as the FPGA design, written in C and run on 
 
 Open this `esp32/` folder as a PlatformIO project (board ESP32-C3-DevKitM-1, framework ESP-IDF), build, and upload.
 
+The firmware talks over the C3's built-in USB Serial/JTAG, which is how this board's USB-C port is wired (Device Manager lists it as "USB JTAG/serial debug unit"). For a board with a USB-UART bridge chip instead (CP210x, CH340), add `ITCH_USE_UART0=1` next to `BOOK_ORDER_BITS` in `src/CMakeLists.txt`.
+
+With built-in USB, pressing RESET drops the serial port for a moment, so an open serial monitor goes quiet. Close and reopen it.
+
 ## Run
 
 Close the PlatformIO serial monitor first, then from the repo root:
