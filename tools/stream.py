@@ -59,6 +59,30 @@ def wait_for(s: serial.Serial, prefix: str, timeout: float) -> str:
     raise TimeoutError(f"no '{prefix}' from the board within {timeout:.0f} s")
 
 
+def start(s: serial.Serial, locate: int, tries: int = 8) -> str:
+    """Send the START frame until the board answers READY.
+
+    Some boards reset when the port opens, and a START sent while the
+    board is still booting gets lost, so keep asking for a few seconds.
+    Anything else the board prints is shown, which helps when it doesn't
+    answer at all.
+    """
+    frame = struct.pack(">HH", 0xFFFF, locate)
+    for _ in range(tries):
+        s.write(frame)
+        end = time.time() + 1.0
+        while time.time() < end:
+            line = s.readline().decode(errors="replace").strip()
+            if line.startswith("READY") and f"locate={locate}" in line:
+                return line
+            if line:
+                print(f"  board: {line}")
+    raise TimeoutError(
+        "the board never answered READY. Check that the ESP32 firmware is uploaded "
+        "(serial monitor + RESET should print 'READY locate=1'), that the PlatformIO "
+        "monitor is closed, and that the port is right.")
+
+
 def read_report(s: serial.Serial, timeout: float) -> dict:
     wait_for(s, "BEGIN", timeout)
     rep = {"STAT": {}}
@@ -94,12 +118,7 @@ def main() -> None:
     print(f"{a.file}: {len(data):,} bytes")
 
     s = open_port(a.port, a.baud)
-    time.sleep(0.3)
-    s.reset_input_buffer()
-
-    # START frame: reset the board's book and stats, track this locate.
-    s.write(struct.pack(">HH", 0xFFFF, a.locate))
-    print(wait_for(s, "READY", 5))
+    print(start(s, a.locate))
 
     t0 = time.time()
     chunk = 1024
