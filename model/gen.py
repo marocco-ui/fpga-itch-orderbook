@@ -24,7 +24,10 @@ from itch import Msg, encode, frame
 TICK = 100  # $0.01 with 4 implied decimals
 
 
-def generate(count: int, seed: int = 1, stocks: List[str] | None = None) -> List[Msg]:
+def generate(count: int, seed: int = 1, stocks: List[str] | None = None,
+             max_live: int = 400) -> List[Msg]:
+    """max_live caps resting orders per stock so the book reaches a steady
+    state instead of growing forever, like a real book during the day."""
     rng = random.Random(seed)
     stocks = stocks or ["AAPL", "MSFT"]
     msgs: List[Msg] = []
@@ -53,7 +56,7 @@ def generate(count: int, seed: int = 1, stocks: List[str] | None = None) -> List
         live = [r for r, o in book.orders.items() if o.locate == loc]
         roll = rng.random()
 
-        if not live or roll < 0.40:
+        if not live or (roll < 0.40 and len(live) < max_live):
             side = rng.choice("BS")
             off = rng.randint(1, 20) * TICK
             price = mids[loc] - off if side == "B" else mids[loc] + off

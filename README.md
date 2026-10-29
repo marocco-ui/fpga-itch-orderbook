@@ -1,14 +1,15 @@
 # itch-fpga
 
-A hardware market data parser and order book for Nasdaq TotalView-ITCH 5.0, written in SystemVerilog and targeting a Xilinx Artix-7 (Digilent Basys 3).
+A market data parser and order book for Nasdaq TotalView-ITCH 5.0, built twice: in C on an ESP32-C3 microcontroller, and in SystemVerilog on a Xilinx Artix-7 FPGA (Digilent Basys 3). Same input, same golden model, measured latency on both.
 
-Raw ITCH bytes go in. The parser decodes order messages one byte per clock, and the book keeps the best bid and best ask for a stock. Every stage is checked against a Python golden model.
+Raw ITCH bytes go in. The parser decodes order messages and the book keeps the best bid and best ask for a stock. Every implementation is checked against a Python golden model.
 
 ## Status
 
 | Stage | What | State |
 |---|---|---|
 | 1 | Python golden model and test vectors | Done |
+| 1b | ESP32-C3 software baseline in C, timed in CPU cycles ([esp32/](esp32/)) | Built, matches golden model on PC; first board run next |
 | 2 | Parser RTL (byte stream to decoded order events) | Next |
 | 3 | Order book RTL (block RAM, best bid/ask) | Planned |
 | 4 | Board bring-up: UART feed into the Basys 3 | Planned |
@@ -18,6 +19,8 @@ Raw ITCH bytes go in. The parser decodes order messages one byte per clock, and 
 
 ```
 model/   Python golden model (codec, order book, generator, tools)
+esp32/   C parser and order book on an ESP32-C3 (PlatformIO project)
+tools/   PC-side scripts (stream.py feeds the ESP32 and checks its results)
 rtl/     SystemVerilog
 tb/      Testbenches; tb/vectors/ holds generated golden vectors
 tests/   pytest suite for the model

@@ -22,3 +22,8 @@ results.xml
 *.str
 .Xil/
 vivado/
+
+# PlatformIO / ESP-IDF
+.pio/
+esp32/sdkconfig.*
+esp32/.vscode/
